@@ -43,9 +43,159 @@ class Image():
         return self.label
 
 
+class Perceptron():
+
+    def __init__(self, network, layers: "dict[int, list[float]]", in_nodes):
+
+        if layers != None:
+            self.layers = layers
+        else:
+            w = [0.1 * random.random() - 0.05 for x in range(in_nodes)]
+
+            for i, weight in enumerate(w): #Makes sure no weights are init to true zero
+                if weight == 0:
+                    w[i] += 0.01
+            self.layers = {0:np.array(w)}
+
+        #self.layer = layer
+            
+        #self.in_nodes = in_nodes
+        self.network = network
+        self.output = 0
+
+    def get_connections_layer(self, layer_id):
+        return self.layers.get(layer_id, [])
+
+    def set_network(self, network):
+        self.network = network
+
+    def extend_layer(self, layer_id, layer_len):
+
+        if layer_id not in self.layers:
+            self.layers[layer_id] = np.array([0.1 * random.random() - 0.05 for x in range(layer_len)])
+            return
+
+        weights = self.layers[layer_id]
+
+        if len(weights) < layer_len:
+            new_weights = np.array([0.1 * random.random() - 0.05 for x in range(layer_len)])
+            for i, val in enumerate(weights):
+                new_weights[i] = val
+            self.layers[layer_id] = new_weights
+
+    def add_child(self, weight, weight_index, layer_id, layer_size):
+
+        self.extend_layer(layer_id, layer_size)
+        layer = self.layers[layer_id]
+        layer[weight_index] = weight
+
+
+    def spawn_child(self, layer_id, layer_size):
+        #TODO: Should I remove the layer completely from the parent, saving a lot of computation.
+
+        child_layers = {}
+
+        for l_id, layer in self.layers.items():
+
+            child_weights = layer.copy()
+        
+            for i, w in enumerate(child_weights):
+
+                if w < 0.1 and w > -0.1:
+                    child_weights[i] = 0
+                else:
+                    if l_id == 0:
+                        layer[i] = 0
+
+            child_layers[l_id] = child_weights
+            #print("added", len(child_weights), "to", l_id)
+
+        child = Perceptron(self.network, child_layers, -1)
+
+
+        new_layer = np.array([0.1 * random.random() - 0.05 for x in range(layer_size)])
+        new_layer[-1] = 0.9
+        self.layers[layer_id] = new_layer
+        return child
+
+
+    def should_spawn(self):
+
+        strong = 0.5
+
+        strong_req = 0.1
+
+        minimal_req = 30
+        active_connections = 0
+        strong_connections = 0
+
+        for _, layer in self.layers.items():
+
+            active_connections += len([w for w in layer if w != 0])
+            strong_connections += len([w for w in layer if abs(w) > strong])
+        
+        if strong_connections > active_connections * strong_req and active_connections > minimal_req:
+            return True
+        else:
+            return False
+
+    def backprop_ich(self, label, classifying):
+        lr = 0.1
+        #TODO: Start by just adjusting layer 0 weights and try without ever growing the net to make sure that it works before anything
+        expect = 1 if label == classifying else 0
+        #print("class: " ,self.classifier, ", label: ", image.get_label(), ", expect: ", expect, ", res: ", res)
+        error = expect - self.output
+
+        #in_layer = self.layers[0]
+
+        for key, layer in self.layers.items():
+
+            for i, pixel in enumerate(self.network.get_layer(key)):
+
+                if layer[i] != 0:
+                    layer[i] += lr * error * pixel
+
+        return error
+
+    def activate(self):
+        activation = 0
+
+        for layer_id, weights in self.layers.items():
+            layer_outputs = self.network.get_layer(layer_id)
+
+            if len(weights) < len(layer_outputs):
+                #print(self)
+                #new_weights = np.array([0.1 * random.random() - 0.05 for x in range(len(layer_outputs))])
+                #print(len(layer_outputs), len(weights))
+                #weights += np.concatenate([weights, new_weights], axis=None)
+                #for i, val in enumerate(weights):
+                #    new_weights[i] = val
+                #new_weights[:len(weights)] = weights
+                #self.layers[layer_id] = new_weights
+                #self.layers[layer_id] = new_weights
+                self.extend_layer(layer_id, len(layer_outputs))
+                weights = self.layers[layer_id]
+
+                #activation += np.dot(new_weights, layer_outputs)
+            
+            activation += np.dot(weights, layer_outputs)
+
+
+        self.output = self.activation(activation)
+        return self.output
+
+    '''
+    Activation function, sigmoid.
+    param: x - input.
+    '''
+    def activation(self, x):
+        return 1 / (1 + math.exp(-x))
+
+
+
 class Network():
 
-    def __init__(self, output_layer):
+    def __init__(self, output_layer: "list[Perceptron]"):
 
         for perceptron in output_layer:
             perceptron.set_network(self)
@@ -64,38 +214,112 @@ class Network():
             assert(False)
         self.layers.nodeat(layer).append()
 
+    def all_common_layer(self, child_l_id, parent_l_id):
+        parent_layer = self.layers[parent_l_id]
+        prev_len_child_l = len(self.layers[child_l_id])
+
+        for i, parent1 in enumerate(parent_layer):
+            parent2 = parent_layer[(i + 1) % len(parent_layer)]
+
+            self.add_common_perceptron(child_l_id, parent1, parent2)
+
+        new_len_child_l = len(self.layers[child_l_id])
+        for i, parent1 in enumerate(parent_layer): #This is done later to not extend the parents array several times
+            parent2 = parent_layer[(i + 1) % len(parent_layer)]
+
+            parent1.add_child(0.5, prev_len_child_l + i, child_l_id, new_len_child_l)
+            parent2.add_child(0.5, prev_len_child_l + i, child_l_id, new_len_child_l)
+
+        self.layer_outputs[child_l_id] = np.zeros(new_len_child_l)
+        
+
+
+    def add_common_perceptron(self, child_l_id, parent1:Perceptron, parent2:Perceptron):
+        child_layers = {}
+
+        for layer_id in self.layer_order:
+
+            if layer_id == child_l_id:
+                break
+
+            conn1 = parent1.get_connections_layer(layer_id)
+            conn2 = parent2.get_connections_layer(layer_id)
+
+            if len(conn1) != 0:
+                child_weights = conn1.copy()
+            elif len(conn2) != 0:
+                child_weights = conn2.copy()
+            else:
+                continue
+        
+            if len(conn1) != 0 and len(conn2) != 0:
+
+                for i, w in enumerate(child_weights):
+
+                    w = (conn2[i] + w) / 2
+
+                    if w < 0.05 and w > -0.05:
+                        child_weights[i] = 0
+                    else:
+                        child_weights[i] = w
+
+                child_layers[layer_id] = child_weights
+                #print("added", len(child_weights), "to", l_id)
+
+        child = Perceptron(self, child_layers, -1)
+        self.layers[child_l_id].append(child)
+
+    def add_childs(self, new_layer_id, layer_id):
+
+        layer = self.layers[layer_id]
+
+        new_layer = []
+            
+        for perceptron in layer:
+
+            if perceptron.should_spawn():
+                
+                new_layer.append(perceptron.spawn_child(new_layer_id, len(new_layer) + 1))
+                #perceptrons_that_spawned.append(perceptron)
+
+        if len(new_layer) > 0 :
+            #print(new_layer_id)
+            #print("use------------")
+            self.layers[new_layer_id] = new_layer
+            self.layer_outputs[new_layer_id] = np.zeros(len(new_layer))
+            new_lo = []
+
+            for lo in self.layer_order:
+                
+                if lo == layer_id:
+                    new_lo.append(new_layer_id)
+                new_lo.append(lo)
+            self.layer_order = new_lo
+            return True
+        return False
+
     def grow_network(self):
 
         #if len(self.layer_order) > 4:
             #return
 
         layer_order = self.layer_order
+        #print("Before", self.layer_order)
 
         for layer_id in layer_order:
-            layer = self.layers[layer_id]
-            new_layer_id = random.randint(1, 100000)
-            new_layer = []
+            #layer = self.layers[layer_id]
+
+            new_layer_id = 100001
+
+            while new_layer_id in self.layers:
+                new_layer_id = random.randint(1, 100000)
+
+            added = self.add_childs(new_layer_id, layer_id)
+
+            if added:
+                self.all_common_layer(new_layer_id, layer_id)
+        #print("After", self.layer_order)
             
-            for perceptron in layer:
-
-                if perceptron.should_spawn():
-                    
-                    new_layer.append(perceptron.spawn_child(new_layer_id, len(new_layer) + 1))
-                    #perceptrons_that_spawned.append(perceptron)
-
-            if len(new_layer) > 0 :
-                #print(new_layer_id)
-                #print("use------------")
-                self.layers[new_layer_id] = new_layer
-                self.layer_outputs[new_layer_id] = np.zeros(len(new_layer))
-                new_lo = []
-
-                for lo in self.layer_order:
-                    
-                    if lo == layer_id:
-                        new_lo.append(new_layer_id)
-                    new_lo.append(lo)
-                self.layer_order = new_lo
 
     def get_layer(self, layer):
 
@@ -164,7 +388,8 @@ class Network():
 
                     for conn in connections:
 
-                        if conn != 0:
+                        if abs(conn) > 0.1:
+                        #if conn != 0:
                             neigh_matrix[i1][i2] = 1
                             neigh_matrix[i2][i1] = 1
                         i2 += 1
@@ -191,139 +416,14 @@ class Network():
 
 
         #nx.draw(G, labels=labeldict, with_labels = True)
-        print(G.edges())
-        print(G.nodes())
+        #print(G.edges())
+        #print(G.nodes())
         #nx.draw(G, edges=G.edges(), width=10)
         plt.show()
 
 
     #def print_net(self):
     #    return
-
-class Perceptron():
-
-    def __init__(self, network, layers, in_nodes):
-
-        if layers != None:
-            self.layers = layers
-        else:
-            w = [0.1 * random.random() - 0.05 for x in range(in_nodes)]
-
-            for i, weight in enumerate(w): #Makes sure no weights are init to true zero
-                if weight == 0:
-                    w[i] += 0.01
-            self.layers = {0:np.array(w)}
-
-        #self.layer = layer
-            
-        #self.in_nodes = in_nodes
-        self.network = network
-        self.output = 0
-
-    def get_connections_layer(self, layer_id):
-        return self.layers.get(layer_id, [])
-
-    def set_network(self, network):
-        self.network = network
-
-    def spawn_child(self, layer_id, layer_size):
-        #TODO: Should I remove the layer completely from the parent, saving a lot of computation.
-
-        child_layers = {}
-
-        for key, layer in self.layers.items():
-
-            child_weights = layer.copy()
-        
-            for i, w in enumerate(child_weights):
-
-                if w < 0.2 and w > -0.2:
-                    child_weights[i] = 0
-                #else:
-                    #layer[i] = 0
-
-            child_layers[key] = child_weights
-            #print("added", len(child_weights), "to", key)
-
-        child = Perceptron(self.network, child_layers, -1)
-
-
-        new_layer = np.array([0.1 * random.random() - 0.05 for x in range(layer_size)])
-        new_layer[-1] = 0.9
-        self.layers[layer_id] = new_layer
-        return child
-
-
-    def should_spawn(self):
-
-        strong = 0.5
-
-        strong_req = 0.1
-
-        minimal_req = 30
-        active_connections = 0
-        strong_connections = 0
-
-        for _, layer in self.layers.items():
-
-            active_connections += len([w for w in layer if w != 0])
-            strong_connections += len([w for w in layer if abs(w) > strong])
-        
-        if strong_connections > active_connections * strong_req and active_connections > minimal_req:
-            return True
-        else:
-            return False
-
-    def backprop_ich(self, label, classifying):
-        lr = 0.1
-        #TODO: Start by just adjusting layer 0 weights and try without ever growing the net to make sure that it works before anything
-        expect = 1 if label == classifying else 0
-        #print("class: " ,self.classifier, ", label: ", image.get_label(), ", expect: ", expect, ", res: ", res)
-        error = expect - self.output
-
-        #in_layer = self.layers[0]
-
-        for key, layer in self.layers.items():
-
-            for i, pixel in enumerate(self.network.get_layer(key)):
-
-                if layer[i] != 0:
-                    layer[i] += lr * error * pixel
-
-        return error
-
-    def activate(self):
-        activation = 0
-
-        for layer_id, weights in self.layers.items():
-            layer_outputs = self.network.get_layer(layer_id)
-
-            if len(weights) < len(layer_outputs):
-                #print(self)
-                new_weights = np.array([0.1 * random.random() - 0.05 for x in range(len(layer_outputs))])
-                #print(len(layer_outputs), len(weights))
-                #weights += np.concatenate([weights, new_weights], axis=None)
-                for i, val in enumerate(weights):
-                    new_weights[i] = val
-                #new_weights[:len(weights)] = weights
-                #self.layers[layer_id] = new_weights
-                self.layers[layer_id] = new_weights
-
-                activation += np.dot(new_weights, layer_outputs)
-            else:
-                activation += np.dot(weights, layer_outputs)
-
-
-        self.output = self.activation(activation)
-        return self.output
-
-    '''
-    Activation function, sigmoid.
-    param: x - input.
-    '''
-    def activation(self, x):
-        return 1 / (1 + math.exp(-x))
-
 
 
 '''
@@ -409,15 +509,17 @@ def run():
 
     start = time.time()
 
-    for i in range(0,10):
+    for i in range(0,30):
         tot_err = net.train(train_set)
-        #net.grow_network()
+
+        if i % 10 == 9:
+            net.grow_network()
         print(tot_err)
 
     end = time.time()
 
     print("Time:", end - start, "seconds")
-    #net.show_net()
+    net.show_net()
 
     return
 
