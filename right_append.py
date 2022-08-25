@@ -91,6 +91,9 @@ class Perceptron():
         layer = self.layers[layer_id]
         layer[weight_index] = weight
 
+    def remove_layer(self, layer_id):
+        del self.layers[layer_id]
+
 
     def spawn_child(self, layer_id, layer_size):
         #TODO: Should I remove the layer completely from the parent, saving a lot of computation.
@@ -230,6 +233,40 @@ class Network():
             assert(False)
         self.layers.nodeat(layer).append()
 
+
+    def add_uncommon_percp(self, child_l_id, parent1: Perceptron, parent2:Perceptron):
+        child_layers = {}
+
+        for layer_id in [0] + self.layer_order:
+
+            if layer_id == child_l_id:
+                break
+
+            conn1 = parent1.get_connections_layer(layer_id)
+            conn2 = parent2.get_connections_layer(layer_id)
+
+            if len(conn1) != 0 and len(conn2) != 0:
+                child_weights = conn1.copy()
+
+                for i, w in enumerate(child_weights):
+
+                    w = (w - conn2[i]) / 2
+
+                    if abs(w) < 0.025:
+                        child_weights[i] = 0
+                    else:
+                        child_weights[i] = w
+
+                child_layers[layer_id] = child_weights
+                #print("added", len(child_weights), "to", l_id)
+
+        child = Perceptron(self, child_layers, -1)
+        self.layers[child_l_id].append(child)
+
+
+        #return (parent1_w, parent2_w)
+
+
     def all_common_layer(self, child_l_id, parent_l_id):
         new_layer = []
 
@@ -260,6 +297,7 @@ class Network():
 
                 #parent2 = parent_layer[(i + 1) % len(parent_layer)]
                 self.add_common_perceptron(child_l_id, parent1, parent2)
+                #self.add_uncommon_percp(child_l_id, parent1, parent2)
 
         new_len_child_l = len(self.layers[child_l_id])
         for i, parent1 in enumerate(parent_layer): #This is done later to not extend the parents array several times
@@ -280,7 +318,7 @@ class Network():
     def add_common_perceptron(self, child_l_id, parent1:Perceptron, parent2:Perceptron):
         child_layers = {}
 
-        for layer_id in self.layer_order:
+        for layer_id in [0] + self.layer_order:
 
             if layer_id == child_l_id:
                 break
@@ -351,22 +389,31 @@ class Network():
         #if len(self.layer_order) > 4:
             #return
 
-        layer_order = self.layer_order
+        #layer_order = self.layer_order
         #print("Before", self.layer_order)
 
-        for layer_id in layer_order:
+        #for layer_id in layer_order:
             #layer = self.layers[layer_id]
 
-            new_layer_id = OUTPUT_LAYER
+        new_layer_id = OUTPUT_LAYER
 
-            while new_layer_id in self.layers:
-                new_layer_id = random.randint(1, 100000)
+        while new_layer_id in self.layers:
+            new_layer_id = random.randint(1, 100000)
 
-            #added = self.add_childs(new_layer_id, layer_id)
+        #added = self.add_childs(new_layer_id, layer_id)
 
-            #if added:
-            self.all_common_layer(new_layer_id, layer_id)
-            #print("added a total of ", len(self.layers[new_layer_id]) , "new nodes")
+        #if added:
+        self.all_common_layer(new_layer_id, OUTPUT_LAYER)
+
+        rem_layer = 0
+
+        if len(self.layer_order) > 2:
+            rem_layer = self.layer_order[-3]
+
+        for out_percp in self.layers[OUTPUT_LAYER]:
+            out_percp.remove_layer(rem_layer)
+
+        #print("added a total of ", len(self.layers[new_layer_id]) , "new nodes")
         #print("After", self.layer_order)
             
 
@@ -658,7 +705,7 @@ def run():
 
     start = time.time()
 
-    grow_times = 1
+    grow_times = 3
     repeats = 10
 
     if len(sys.argv) > 1:
