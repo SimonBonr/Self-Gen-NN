@@ -11,7 +11,9 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from networkx.drawing.nx_pydot import graphviz_layout
 
-
+INPUT_LAYER = 0
+OUTPUT_LAYER = 100001
+VERBOSE = True
 
 '''
 Image class based of pixels as ascii values from a text file.
@@ -121,7 +123,7 @@ class Perceptron():
 
     def should_spawn(self):
 
-        strong = 0.5
+        strong = 0.3
 
         strong_req = 0.1
 
@@ -133,18 +135,19 @@ class Perceptron():
 
             active_connections += len([w for w in layer if w != 0])
             strong_connections += len([w for w in layer if abs(w) > strong])
+            #print([w for w in layer if abs(w) > strong])
         
         if strong_connections > active_connections * strong_req and active_connections > minimal_req:
             return True
         else:
             return False
 
-    def backprop_ich(self, label, classifying):
+    def backprop_ich(self, in_error, next_layer):
         lr = 0.1
-        #TODO: Start by just adjusting layer 0 weights and try without ever growing the net to make sure that it works before anything
-        expect = 1 if label == classifying else 0
+        
         #print("class: " ,self.classifier, ", label: ", image.get_label(), ", expect: ", expect, ", res: ", res)
-        error = expect - self.output
+        error = in_error * Perceptron.transfer_derivative(self.output)
+        next_errors = []
 
         #in_layer = self.layers[0]
 
@@ -155,7 +158,11 @@ class Perceptron():
                 if layer[i] != 0:
                     layer[i] += lr * error * pixel
 
-        return error
+        if next_layer != INPUT_LAYER and next_layer in self.layers:
+            next_errors = self.layers[next_layer] * error
+
+
+        return (error, next_errors)
 
     def activate(self):
         activation = 0
@@ -191,6 +198,12 @@ class Perceptron():
     def activation(self, x):
         return 1 / (1 + math.exp(-x))
 
+    
+    
+    # Calculate the derivative of an neuron output
+    def transfer_derivative(output):
+	    return output * (1.0 - output)
+
 
 
 class Network():
@@ -200,9 +213,9 @@ class Network():
         for perceptron in output_layer:
             perceptron.set_network(self)
         
-        self.layers = {100001:output_layer}
-        self.layer_order = [100001]
-        self.layer_outputs = {100001: np.zeros(len(output_layer))}
+        self.layers = {OUTPUT_LAYER:output_layer}
+        self.layer_order = [OUTPUT_LAYER]
+        self.layer_outputs = {OUTPUT_LAYER: np.zeros(len(output_layer))}
         self.image = None
         self.classifier_map = {0:4, 1:7, 2:8, 3:9}
         #self.layers.extendleft([["Test1.1", "Test1.2"]])
@@ -283,7 +296,9 @@ class Network():
                 #perceptrons_that_spawned.append(perceptron)
 
         if len(new_layer) > 0 :
-            #print(new_layer_id)
+
+            if VERBOSE == True:
+                print("growing with layer: ", new_layer_id)
             #print("use------------")
             self.layers[new_layer_id] = new_layer
             self.layer_outputs[new_layer_id] = np.zeros(len(new_layer))
@@ -300,6 +315,9 @@ class Network():
 
     def grow_network(self):
 
+        if VERBOSE == True:
+            print("potential growing")
+
         #if len(self.layer_order) > 4:
             #return
 
@@ -309,7 +327,7 @@ class Network():
         for layer_id in layer_order:
             #layer = self.layers[layer_id]
 
-            new_layer_id = 100001
+            new_layer_id = OUTPUT_LAYER
 
             while new_layer_id in self.layers:
                 new_layer_id = random.randint(1, 100000)
@@ -318,12 +336,13 @@ class Network():
 
             if added:
                 self.all_common_layer(new_layer_id, layer_id)
+                print("added a total of ", len(self.layers[new_layer_id]) , "new nodes")
         #print("After", self.layer_order)
             
 
     def get_layer(self, layer):
 
-        if layer == 0:
+        if layer == INPUT_LAYER:
             return self.image
         return self.layer_outputs[layer]
 
@@ -344,11 +363,68 @@ class Network():
 
                 self.layer_outputs[lo] = outputs
 
-            for i, out_perceptrons in enumerate(self.layers[self.layer_order[-1]]):
-                image_err += abs(out_perceptrons.backprop_ich(image.get_label(), self.classifier_map[i]))
+            #for i, out_perceptrons in enumerate(self.layers[self.layer_order[-1]]):
+            #    image_err += abs(out_perceptrons.backprop_ich(image.get_label(), self.classifier_map[i]))
             #print(image_err / len(self.classifier_map))
-            tot_err += image_err
+            #tot_err += image_err
+            image_err = self.backprop(image)
+            tot_err += abs(image_err)
         return tot_err
+
+    def backprop(self, image: Image):
+
+        #out_layer = self.layer_order[-1]
+        next_layer = 0
+        next_errors = None
+
+        if len(self.layer_order) > 1:
+            next_layer = self.layer_order[-2]
+            next_errors = np.zeros(len(self.layers[next_layer]))
+
+        image_err = 0
+
+        output_layer = self.layer_outputs[OUTPUT_LAYER]
+
+        for i, out_perceptrons in enumerate(self.layers[OUTPUT_LAYER]):
+            expected = 1 if image.get_label() == self.classifier_map[i] else 0
+            percp_error = output_layer[i] - expected
+
+            (error, next_errors_percp) = out_perceptrons.backprop_ich(percp_error, next_layer)
+            
+            image_err += error
+
+            if len(next_errors_percp) != 0:
+                next_errors += next_errors_percp
+
+        for i, lo in enumerate(reversed(self.layer_order[0:-1])):
+            i = len(self.layer_order) - i - 2
+            curr_errors = next_errors
+
+            if i > 0:
+                next_layer = self.layer_order[i - 1]
+                next_errors = np.zeros(len(self.layers[next_layer]))
+            else:
+                next_layer = 0            
+            
+
+            for i, out_perceptrons in enumerate(self.layers[lo]):
+                error = curr_errors[i] if len(curr_errors) > i else 0
+                (_, next_errors_percp) = out_perceptrons.backprop_ich(curr_errors[i], next_layer)
+
+                # try:
+                #     (_, next_errors_percp) = out_perceptrons.backprop_ich(curr_errors[i], next_layer)
+                # except:
+                #     print("lo", lo, "next_layer", next_layer)
+                #     self.show_net()
+                
+
+                if len(next_errors_percp) != 0:
+                    next_errors += next_errors_percp
+
+            
+        return image_err
+
+
             
     def show_net(self):
         total_nodes = 0
@@ -509,11 +585,40 @@ def run():
 
     start = time.time()
 
-    for i in range(0,30):
+    grow_times = 3
+    repeats = 10
+
+    if len(sys.argv) > 1:
+        repeats = int(sys.argv[1])
+    if len(sys.argv) > 2:
+        grow_times = int(sys.argv[2])
+
+    grow_index = int(repeats / grow_times)
+
+    first_err = tot_err = net.train(train_set)
+    #print(first_err)
+    prev_diff = 0
+
+    for i in range(0,repeats):
         tot_err = net.train(train_set)
 
-        if i % 10 == 9:
+        if i % grow_index == grow_index - 1:
             net.grow_network()
+        # curr_diff = first_err / tot_err
+
+        # if curr_diff - prev_diff  < 0.1:
+        #     print(first_err)
+        #     print(prev_diff)
+        #     print(curr_diff)
+        #     net.grow_network()
+        #     first_err = net.train(train_set)
+        #     curr_diff = 0
+
+        # #print("-------", curr_diff - prev_diff, "-------")
+        # #print(curr_diff, prev_diff)
+
+        # prev_diff = curr_diff
+
         print(tot_err)
 
     end = time.time()
