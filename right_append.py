@@ -146,7 +146,9 @@ class Perceptron():
         lr = 0.1
         
         #print("class: " ,self.classifier, ", label: ", image.get_label(), ", expect: ", expect, ", res: ", res)
-        error = in_error * Perceptron.transfer_derivative(self.output)
+        #print(self.output)
+        error = in_error * (Perceptron.transfer_derivative(self.output))
+        #error = in_error
         next_errors = []
 
         #in_layer = self.layers[0]
@@ -187,8 +189,9 @@ class Perceptron():
             
             activation += np.dot(weights, layer_outputs)
 
-
+        #
         self.output = self.activation(activation)
+        #print(self.output)
         return self.output
 
     '''
@@ -228,13 +231,34 @@ class Network():
         self.layers.nodeat(layer).append()
 
     def all_common_layer(self, child_l_id, parent_l_id):
+        new_layer = []
+
+        if VERBOSE == True:
+                print("growing with layer: ", child_l_id)
+        #print("use------------")
+        self.layers[child_l_id] = new_layer
+        self.layer_outputs[child_l_id] = np.zeros(len(new_layer))
+        new_lo = []
+
+        for lo in self.layer_order:
+            
+            if lo == parent_l_id:
+                new_lo.append(child_l_id)
+            new_lo.append(lo)
+        self.layer_order = new_lo
+
+
         parent_layer = self.layers[parent_l_id]
         prev_len_child_l = len(self.layers[child_l_id])
 
         for i, parent1 in enumerate(parent_layer):
-            parent2 = parent_layer[(i + 1) % len(parent_layer)]
 
-            self.add_common_perceptron(child_l_id, parent1, parent2)
+            for j, parent2 in enumerate(parent_layer):
+
+                if i == j:
+                    continue
+                #parent2 = parent_layer[(i + 1) % len(parent_layer)]
+                self.add_common_perceptron(child_l_id, parent1, parent2)
 
         new_len_child_l = len(self.layers[child_l_id])
         for i, parent1 in enumerate(parent_layer): #This is done later to not extend the parents array several times
@@ -271,7 +295,7 @@ class Network():
 
                     w = (conn2[i] + w) / 2
 
-                    if w < 0.05 and w > -0.05:
+                    if abs(w) < 0.025:
                         child_weights[i] = 0
                     else:
                         child_weights[i] = w
@@ -332,11 +356,11 @@ class Network():
             while new_layer_id in self.layers:
                 new_layer_id = random.randint(1, 100000)
 
-            added = self.add_childs(new_layer_id, layer_id)
+            #added = self.add_childs(new_layer_id, layer_id)
 
-            if added:
-                self.all_common_layer(new_layer_id, layer_id)
-                print("added a total of ", len(self.layers[new_layer_id]) , "new nodes")
+            #if added:
+            self.all_common_layer(new_layer_id, layer_id)
+            #print("added a total of ", len(self.layers[new_layer_id]) , "new nodes")
         #print("After", self.layer_order)
             
 
@@ -361,7 +385,7 @@ class Network():
                 for i, perceptron in enumerate(self.layers[lo]):
                     outputs[i] = perceptron.activate()
 
-                self.layer_outputs[lo] = outputs
+                #self.layer_outputs[lo] = outputs
 
             #for i, out_perceptrons in enumerate(self.layers[self.layer_order[-1]]):
             #    image_err += abs(out_perceptrons.backprop_ich(image.get_label(), self.classifier_map[i]))
@@ -387,7 +411,7 @@ class Network():
 
         for i, out_perceptrons in enumerate(self.layers[OUTPUT_LAYER]):
             expected = 1 if image.get_label() == self.classifier_map[i] else 0
-            percp_error = output_layer[i] - expected
+            percp_error = expected - output_layer[i]
 
             (error, next_errors_percp) = out_perceptrons.backprop_ich(percp_error, next_layer)
             
@@ -424,6 +448,49 @@ class Network():
             
         return image_err
 
+
+    def test(self, images: "list[Image]"):
+        correct = 0
+        highest_error = 0
+        avg_highest_error = 0
+
+        for image in images:
+
+            #Select image
+            self.image = image.get_pixels()
+
+            #Run the image through the net going from lower to higher layers
+            for lo in self.layer_order:
+                outputs = self.layer_outputs[lo]
+                
+                for i, perceptron in enumerate(self.layers[lo]):
+                    outputs[i] = perceptron.activate()
+
+                self.layer_outputs[lo] = outputs
+
+            #Check if it classifies the image correctly
+            highest_error_img = 0
+            highest_activation = 0 
+            highest_activation_i = 0
+            for i, output in enumerate(self.layer_outputs[OUTPUT_LAYER]):
+                expected = 1 if image.get_label() == self.classifier_map[i] else 0
+                #Find highest error
+                highest_error_img = max(abs(output - expected), highest_error_img)
+
+                if output > highest_activation:
+                    highest_activation_i = i
+                    highest_activation = output
+
+            if self.classifier_map[highest_activation_i] == image.get_label():
+                correct += 1
+
+            highest_error = max(highest_error_img, highest_error)
+            avg_highest_error += highest_error_img
+
+        print("Average highest error:", avg_highest_error / len(images))
+        print("Highest error:", highest_error)
+        print("Correct percentage: ", correct / len(images))
+        print("Total images:", len(images))          
 
             
     def show_net(self):
@@ -585,7 +652,7 @@ def run():
 
     start = time.time()
 
-    grow_times = 3
+    grow_times = 1
     repeats = 10
 
     if len(sys.argv) > 1:
@@ -601,9 +668,13 @@ def run():
 
     for i in range(0,repeats):
         tot_err = net.train(train_set)
+        print("total error on training:", tot_err)
 
         if i % grow_index == grow_index - 1:
+            net.test(test_set)
             net.grow_network()
+
+
         # curr_diff = first_err / tot_err
 
         # if curr_diff - prev_diff  < 0.1:
@@ -618,8 +689,6 @@ def run():
         # #print(curr_diff, prev_diff)
 
         # prev_diff = curr_diff
-
-        print(tot_err)
 
     end = time.time()
 
