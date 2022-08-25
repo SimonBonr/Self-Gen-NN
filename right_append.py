@@ -253,19 +253,25 @@ class Network():
 
         for i, parent1 in enumerate(parent_layer):
 
-            for j, parent2 in enumerate(parent_layer):
+            if i == len(parent_layer) - 1:
+                break
 
-                if i == j:
-                    continue
+            for parent2 in parent_layer[i+1:]:
+
                 #parent2 = parent_layer[(i + 1) % len(parent_layer)]
                 self.add_common_perceptron(child_l_id, parent1, parent2)
 
         new_len_child_l = len(self.layers[child_l_id])
         for i, parent1 in enumerate(parent_layer): #This is done later to not extend the parents array several times
-            parent2 = parent_layer[(i + 1) % len(parent_layer)]
 
-            parent1.add_child(0.5, prev_len_child_l + i, child_l_id, new_len_child_l)
-            parent2.add_child(0.5, prev_len_child_l + i, child_l_id, new_len_child_l)
+            if i == len(parent_layer) - 1:
+                break
+            
+            for j, parent2 in enumerate(parent_layer[i+1:]):
+            #parent2 = parent_layer[(i + 1) % len(parent_layer)]
+
+                parent2.add_child(0.5, prev_len_child_l + i + j, child_l_id, new_len_child_l)
+                parent1.add_child(0.5, prev_len_child_l + i + j, child_l_id, new_len_child_l)
 
         self.layer_outputs[child_l_id] = np.zeros(new_len_child_l)
         
@@ -672,7 +678,9 @@ def run():
 
         if i % grow_index == grow_index - 1:
             net.test(test_set)
-            net.grow_network()
+
+            if i <= repeats - 5:
+                net.grow_network()
 
 
         # curr_diff = first_err / tot_err
