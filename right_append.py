@@ -1,5 +1,7 @@
-from imp import new_module
+#from imp import new_module
+#from signal import pause
 import sys
+from tokenize import String
 import numpy as np
 import time
 import math
@@ -10,6 +12,8 @@ import random
 import networkx as nx
 import matplotlib.pyplot as plt
 from networkx.drawing.nx_pydot import graphviz_layout
+from scipy import ndimage, misc
+from typing import TextIO
 
 INPUT_LAYER = 0
 OUTPUT_LAYER = 100001
@@ -26,18 +30,33 @@ class Image():
     param: imagefile - File to get ascii pixels from. One image per line
     param: labelfile, default: none - File with label for image. One label per line.
     '''
-    def __init__(self, imagefile, labelfile=None):
+    def __init__(self, pixels, label):
+        self.pixels = pixels
+        self.label = label
+
+    @classmethod
+    def from_file(cls, imagefile: TextIO, labelfile=None):
         pixels = list(map(int,imagefile.readline().split()))
         pixels = list(map((0.001).__mul__,pixels))
-        self.pixels = np.array(pixels)
+        pixels = np.array(pixels)
         #super().set_nodes(pixels)
+        label = ""
 
         if labelfile != None:
-            self.label = int(labelfile.readline())
+            label = int(labelfile.readline())
+
+        return cls(pixels, label)
+
+    @classmethod
+    def from_image(cls, image: np.array, label:String):
+        return cls(image.reshape((28*28)), label)
 
     def get_pixels(self):
         return self.pixels
-    
+
+    def get_as_image(self):
+        return self.pixels.reshape((28,28))
+
     '''
     Returns label for image if available
     '''
@@ -252,10 +271,10 @@ class Network():
 
                     w = (w - conn2[i]) / 2
 
-                    if abs(w) < 0.025:
-                        child_weights[i] = 0
-                    else:
-                        child_weights[i] = w
+                    # if abs(w) < 0.025:
+                    #     child_weights[i] = 0
+                    # else:
+                    #     child_weights[i] = w
 
                 child_layers[layer_id] = child_weights
                 #print("added", len(child_weights), "to", l_id)
@@ -296,8 +315,8 @@ class Network():
             for parent2 in parent_layer[i+1:]:
 
                 #parent2 = parent_layer[(i + 1) % len(parent_layer)]
-                self.add_common_perceptron(child_l_id, parent1, parent2)
-                #self.add_uncommon_percp(child_l_id, parent1, parent2)
+                #self.add_common_perceptron(child_l_id, parent1, parent2)
+                self.add_uncommon_percp(child_l_id, parent1, parent2)
 
         new_len_child_l = len(self.layers[child_l_id])
         for i, parent1 in enumerate(parent_layer): #This is done later to not extend the parents array several times
@@ -339,10 +358,10 @@ class Network():
 
                     w = (conn2[i] + w) / 2
 
-                    if abs(w) < 0.025:
-                        child_weights[i] = 0
-                    else:
-                        child_weights[i] = w
+                    # if abs(w) < 0.025:
+                    #     child_weights[i] = 0
+                    # else:
+                    #     child_weights[i] = w
 
                 child_layers[layer_id] = child_weights
                 #print("added", len(child_weights), "to", l_id)
@@ -645,6 +664,116 @@ def run_n_test(perceptron, train_set, test_set, results, index):
     err = perceptron.test(test_set)
     results[index] = err
 
+
+
+
+def clipped_zoom(img, zoom_factor, **kwargs):
+
+    h, w = img.shape[:2]
+
+    # For multichannel images we don't want to apply the zoom factor to the RGB
+    # dimension, so instead we create a tuple of zoom factors, one per array
+    # dimension, with 1's for any trailing dimensions after the width and height.
+    zoom_tuple = (zoom_factor,) * 2 + (1,) * (img.ndim - 2)
+
+    # Zooming out
+    if zoom_factor < 1:
+
+        # Bounding box of the zoomed-out image within the output array
+        zh = int(np.round(h * zoom_factor))
+        zw = int(np.round(w * zoom_factor))
+        top = (h - zh) // 2
+        left = (w - zw) // 2
+
+        # Zero-padding
+        out = np.zeros_like(img)
+        out[top:top+zh, left:left+zw] = ndimage.zoom(img, zoom_tuple, **kwargs)
+
+    # Zooming in
+    elif zoom_factor > 1:
+
+        # Bounding box of the zoomed-in region within the input array
+        zh = int(np.round(h / zoom_factor))
+        zw = int(np.round(w / zoom_factor))
+        top = (h - zh) // 2
+        left = (w - zw) // 2
+
+        out = ndimage.zoom(img[top:top+zh, left:left+zw], zoom_tuple, **kwargs)
+
+        # `out` might still be slightly larger than `img` due to rounding, so
+        # trim off any extra pixels at the edges
+        trim_top = ((out.shape[0] - h) // 2)
+        trim_left = ((out.shape[1] - w) // 2)
+        out = out[trim_top:trim_top+h, trim_left:trim_left+w]
+
+    # If zoom_factor == 1, just return the input array
+    else:
+        out = img
+    return out
+
+
+#Data augmentation
+def data_augmentation(image_set: "list[Image]", n_sets):
+
+    # fig = plt.figure(figsize=(10, 4))
+    # ax1, ax2, ax3, ax4 = fig.subplots(1, 4)
+    # img = image_set[0].get_as_image()
+    # img_45 = ndimage.rotate(img, 45, reshape=False)
+    # img_zoom = clipped_zoom(img, 0.9)
+    # img_shift = ndimage.shift(img, -4)
+    # ax1.imshow(img, cmap='gray')
+    # ax1.set_axis_off()
+    # ax2.imshow(img_45, cmap='gray')
+    # ax2.set_axis_off()
+    # ax3.imshow(img_zoom, cmap='gray')
+    # ax3.set_axis_off()
+    # ax4.imshow(img_shift, cmap='gray')
+    # ax4.set_axis_off()
+    # fig.set_tight_layout(True)
+    # plt.show()
+
+    #fig = plt.figure(figsize=(10, 2))
+    #ax1, ax2 = fig.subplots(1, 2)
+
+    train_sets = []
+    #plt.ion()
+
+    for i in range(0,n_sets):
+        new_image_set: "list[Image]" = []
+        fails = 0
+
+        for image in image_set:
+
+            rotate_val = random.random() * 90 - 45
+            zoom_val = random.random() * 0.4 + 0.8
+            shift_val = random.random() * 4 - 2
+            #print(image.get_as_image().size)
+            img_t = ndimage.rotate(image.get_as_image(), rotate_val, reshape=False)
+            #print(img_t.size)
+            img_t = clipped_zoom(img_t, zoom_val)
+            #print(img_t.size)
+            img_t = ndimage.shift(img_t, shift_val)
+            #print(img_t.size)
+
+
+            if img_t.size < 784:
+                new_image_set.append(image)
+                fails += 1
+                #exit()
+                continue
+            new_image_set.append(Image.from_image(img_t, image.get_label()))
+            # ax1.imshow(image.get_as_image(), cmap='gray')
+            # ax2.imshow(new_image_set[-1].get_as_image(), cmap='gray')
+            # fig.set_tight_layout(True)
+            # fig.canvas.draw()
+            # fig.canvas.flush_events()
+            # time.sleep(0.1)            
+        print(fails)
+        train_sets.append(new_image_set)
+    #plt.show()
+    return train_sets
+
+
 '''
 Main loop that runs the program.
 First initializes all files and values stored in them.
@@ -666,6 +795,7 @@ def run():
     training_labels = open("mnist dataset\\training-labels.txt")
     validation_images = open("mnist dataset\\validation-images.txt")
 
+    print(type(training_images))
 
     #traning_images = open(sys.argv[1])    
     #traning_labels = open(sys.argv[2])
@@ -683,9 +813,9 @@ def run():
     v_numi = int(v_numi)
     digits = [int(x) for x in t_digi]
 
-    images = []
+    images: "list[Image]" = []
     for _ in range(0, t_numi):
-        images.append(Image(training_images, training_labels))
+        images.append(Image.from_file(training_images, training_labels))
     random.shuffle(images)
 
     split_i = int(t_numi * 0.75)
@@ -693,8 +823,19 @@ def run():
 
     val_images = []
     for _ in range(0, v_numi):
-        val_images.append(Image(validation_images))
+        val_images.append(Image.from_file(validation_images))
 
+    
+    # ax1.imshow(img, cmap='gray')
+    # ax1.set_axis_off()
+    # ax2.imshow(img_45, cmap='gray')
+    # ax2.set_axis_off()
+    # ax3.imshow(full_img_45, cmap='gray')
+    # ax3.set_axis_off()
+    # fig.set_tight_layout(True)
+    # plt.show()
+
+    train_sets = data_augmentation(train_set, 10)
 
     output_layer = []
 
@@ -720,7 +861,8 @@ def run():
     prev_diff = 0
 
     for i in range(0,repeats):
-        tot_err = net.train(train_set)
+        train_set_i = random.randint(0, len(train_sets) - 1)
+        tot_err = net.train(train_sets[train_set_i])
         print("total error on training:", tot_err)
 
         if i % grow_index == grow_index - 1:
