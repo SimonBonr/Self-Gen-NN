@@ -1,76 +1,36 @@
-#from imp import new_module
-#from signal import pause
+
 import sys
-from tokenize import String
+
 import numpy as np
 import time
 import math
-from threading import Thread
 import random
-#import llist
-#from llist import sllist,sllistnode
+
 import networkx as nx
 import matplotlib.pyplot as plt
 from networkx.drawing.nx_pydot import graphviz_layout
-from scipy import ndimage, misc
-from typing import TextIO
+from data_handling import data_augmentation, data_loading, data_split, Image
 
 INPUT_LAYER = 0
 OUTPUT_LAYER = 100001
 VERBOSE = True
 
 '''
-Image class based of pixels as ascii values from a text file.
-Also stores the label for the image if available.
+A class representing individual perceptrons, potentially superflous
 '''
-class Image():
-
-    '''
-    Initializes class
-    param: imagefile - File to get ascii pixels from. One image per line
-    param: labelfile, default: none - File with label for image. One label per line.
-    '''
-    def __init__(self, pixels, label):
-        self.pixels = pixels
-        self.label = label
-
-    @classmethod
-    def from_file(cls, imagefile: TextIO, labelfile=None):
-        pixels = list(map(int,imagefile.readline().split()))
-        pixels = list(map((0.001).__mul__,pixels))
-        pixels = np.array(pixels)
-        #super().set_nodes(pixels)
-        label = ""
-
-        if labelfile != None:
-            label = int(labelfile.readline())
-
-        return cls(pixels, label)
-
-    @classmethod
-    def from_image(cls, image: np.array, label:String):
-        return cls(image.reshape((28*28)), label)
-
-    def get_pixels(self):
-        return self.pixels
-
-    def get_as_image(self):
-        return self.pixels.reshape((28,28))
-
-    '''
-    Returns label for image if available
-    '''
-    def get_label(self):
-        return self.label
-
-
 class Perceptron():
 
+    '''
+    param network - network it's connected to
+    param layers - a dictionary of the layerId and np.array of floats, can be None for 1st layer
+    param in_nodes - number of inputs to layer, for 1st layer
+    #! Should separate into 2 functions, first_layer() and from_existing()
+    '''
     def __init__(self, network, layers: "dict[int, list[float]]", in_nodes):
 
         if layers != None:
             self.layers = layers
-        else:
+        else: #Generate the weights randomly
             w = [0.1 * random.random() - 0.05 for x in range(in_nodes)]
 
             for i, weight in enumerate(w): #Makes sure no weights are init to true zero
@@ -78,47 +38,71 @@ class Perceptron():
                     w[i] += 0.01
             self.layers = {0:np.array(w)}
 
-        #self.layer = layer
-            
-        #self.in_nodes = in_nodes
         self.network = network
         self.output = 0
 
+    '''
+    Used to get the weights of a specific layer, if it exists
+    '''
     def get_connections_layer(self, layer_id):
         return self.layers.get(layer_id, [])
 
+    '''
+    Sets the network the node is connected to
+    '''
     def set_network(self, network):
         self.network = network
 
+    '''
+    Extends a layer by increasing the size to layer_len, new weights are randomly initialized
+    param layer_id - id of layer to extend
+    param layer_len - new length of the layer
+    '''
     def extend_layer(self, layer_id, layer_len):
 
-        if layer_id not in self.layers:
-            self.layers[layer_id] = np.array([0.1 * random.random() - 0.05 for x in range(layer_len)])
+        if layer_id not in self.layers: #If layer doesn't exist, randomly gen layer and return
+            self.layers[layer_id] = np.array([0.1 * random.random() - 0.05 for _ in range(layer_len)])
             return
 
         weights = self.layers[layer_id]
 
-        if len(weights) < layer_len:
-            new_weights = np.array([0.1 * random.random() - 0.05 for x in range(layer_len)])
+        if len(weights) < layer_len: # Generate new layer and copy over existing weights
+            new_weights = np.array([0.1 * random.random() - 0.05 for _ in range(layer_len)])
             for i, val in enumerate(weights):
                 new_weights[i] = val
             self.layers[layer_id] = new_weights
 
+    '''
+    Adds a child to this node by extending the size or number of layers if necessary
+    param weight - weight to new child
+    param weight_index - index of child in layer
+    param layer_id - layer id to add the child to
+    param layer_size - size of the layer
+    '''
     def add_child(self, weight, weight_index, layer_id, layer_size):
 
         self.extend_layer(layer_id, layer_size)
         layer = self.layers[layer_id]
         layer[weight_index] = weight
 
+    '''
+    Removes a layer and all the weights to it
+    '''
     def remove_layer(self, layer_id):
         del self.layers[layer_id]
 
-
+    '''
+    #!Not used
+    Basically copies itself into a child node
+    param layer_id - layer id of new child
+    param layer_size - layer size of new child
+    '''
     def spawn_child(self, layer_id, layer_size):
         #TODO: Should I remove the layer completely from the parent, saving a lot of computation.
 
-        child_layers = {}
+        child_layers = {} #Create the childs layers dictionary
 
+        # Copies each layer exactly but skips certain "weak" connections 
         for l_id, layer in self.layers.items():
 
             child_weights = layer.copy()
@@ -127,22 +111,28 @@ class Perceptron():
 
                 if w < 0.1 and w > -0.1:
                     child_weights[i] = 0
-                else:
+                else: # Disconnects itself from the input layer
                     if l_id == 0:
                         layer[i] = 0
 
             child_layers[l_id] = child_weights
-            #print("added", len(child_weights), "to", l_id)
 
-        child = Perceptron(self.network, child_layers, -1)
+        
+        child = Perceptron(self.network, child_layers, -1) # Creates the child
 
 
-        new_layer = np.array([0.1 * random.random() - 0.05 for x in range(layer_size)])
+        #Creates the child layer and connects this Perceptron to the child
+        new_layer = np.array([0.1 * random.random() - 0.05 for _ in range(layer_size)])
         new_layer[-1] = 0.9
         self.layers[layer_id] = new_layer
         return child
 
 
+    '''
+    #!Not used
+    Calculates if this Perceptron should spawn a child.
+    Checks if there is a certain proportion of strong connections to active connections
+    '''
     def should_spawn(self):
 
         strong = 0.3
@@ -164,16 +154,17 @@ class Perceptron():
         else:
             return False
 
+    '''
+    Calculates the local backpropagation for this Perceptron.
+    param in_error - error of this Perceptrons estimation
+    param next_layer - next layer to calulate errors for
+    returns - If the next_layer is not input layer then it returns the error from this Perceptron on the next layer
+    '''
     def backprop_ich(self, in_error, next_layer):
         lr = 0.1
         
-        #print("class: " ,self.classifier, ", label: ", image.get_label(), ", expect: ", expect, ", res: ", res)
-        #print(self.output)
         error = in_error * (Perceptron.transfer_derivative(self.output))
-        #error = in_error
         next_errors = []
-
-        #in_layer = self.layers[0]
 
         for key, layer in self.layers.items():
 
@@ -188,32 +179,23 @@ class Perceptron():
 
         return (error, next_errors)
 
+    '''
+    Calculates the Output of this Perceptron
+    '''
     def activate(self):
         activation = 0
 
+        #Extends any layer if needed
         for layer_id, weights in self.layers.items():
             layer_outputs = self.network.get_layer(layer_id)
 
             if len(weights) < len(layer_outputs):
-                #print(self)
-                #new_weights = np.array([0.1 * random.random() - 0.05 for x in range(len(layer_outputs))])
-                #print(len(layer_outputs), len(weights))
-                #weights += np.concatenate([weights, new_weights], axis=None)
-                #for i, val in enumerate(weights):
-                #    new_weights[i] = val
-                #new_weights[:len(weights)] = weights
-                #self.layers[layer_id] = new_weights
-                #self.layers[layer_id] = new_weights
                 self.extend_layer(layer_id, len(layer_outputs))
                 weights = self.layers[layer_id]
-
-                #activation += np.dot(new_weights, layer_outputs)
             
             activation += np.dot(weights, layer_outputs)
 
-        #
         self.output = self.activation(activation)
-        #print(self.output)
         return self.output
 
     '''
@@ -245,14 +227,9 @@ class Network():
         self.classifier_map = {0:4, 1:7, 2:8, 3:9}
         #self.layers.extendleft([["Test1.1", "Test1.2"]])
 
-    def add_perceptron(self, layer):
-
-        if layer >= self.layers.size:
-            print("Can't add perceptron to non-existing layer")
-            assert(False)
-        self.layers.nodeat(layer).append()
-
-
+    '''
+    Copies the non-common strong connections of two nodes into a child node
+    '''
     def add_uncommon_percp(self, child_l_id, parent1: Perceptron, parent2:Perceptron):
         child_layers = {}
 
@@ -286,12 +263,16 @@ class Network():
         #return (parent1_w, parent2_w)
 
 
+    '''
+    Makes a child node for each potential grouping of the parent.
+    Either child node is made to prioritize common or uncommon connections
+    '''
     def all_common_layer(self, child_l_id, parent_l_id):
         new_layer = []
 
         if VERBOSE == True:
                 print("growing with layer: ", child_l_id)
-        #print("use------------")
+        # Setup
         self.layers[child_l_id] = new_layer
         self.layer_outputs[child_l_id] = np.zeros(len(new_layer))
         new_lo = []
@@ -303,7 +284,7 @@ class Network():
             new_lo.append(lo)
         self.layer_order = new_lo
 
-
+        # Loop parent combinations 1-2, 1-3, 1-4, 2-3, 2-4, 3-4
         parent_layer = self.layers[parent_l_id]
         prev_len_child_l = len(self.layers[child_l_id])
 
@@ -314,7 +295,6 @@ class Network():
 
             for parent2 in parent_layer[i+1:]:
 
-                #parent2 = parent_layer[(i + 1) % len(parent_layer)]
                 #self.add_common_perceptron(child_l_id, parent1, parent2)
                 self.add_uncommon_percp(child_l_id, parent1, parent2)
 
@@ -325,8 +305,8 @@ class Network():
                 break
             
             for j, parent2 in enumerate(parent_layer[i+1:]):
-            #parent2 = parent_layer[(i + 1) % len(parent_layer)]
-
+                
+                #Adjust weights to new childs if wanted.
                 parent2.add_child(0.5, prev_len_child_l + i + j, child_l_id, new_len_child_l)
                 parent1.add_child(0.5, prev_len_child_l + i + j, child_l_id, new_len_child_l)
 
@@ -334,6 +314,9 @@ class Network():
         
 
 
+    '''
+    Copies the common strong connections of two nodes into a child node
+    '''
     def add_common_perceptron(self, child_l_id, parent1:Perceptron, parent2:Perceptron):
         child_layers = {}
 
@@ -369,6 +352,9 @@ class Network():
         child = Perceptron(self, child_layers, -1)
         self.layers[child_l_id].append(child)
 
+    '''
+    Copies the strong connections of a node into a child node
+    '''
     def add_childs(self, new_layer_id, layer_id):
 
         layer = self.layers[layer_id]
@@ -386,7 +372,7 @@ class Network():
 
             if VERBOSE == True:
                 print("growing with layer: ", new_layer_id)
-            #print("use------------")
+
             self.layers[new_layer_id] = new_layer
             self.layer_outputs[new_layer_id] = np.zeros(len(new_layer))
             new_lo = []
@@ -400,79 +386,94 @@ class Network():
             return True
         return False
 
+    '''
+    Grow the network
+    Can either copy existing nodes
+    Or make merge between two nodes alike weights
+    Or make merge between two nodes unalike weights
+    Generates only from the output layer at the moment, removes connections to earlier layers as well
+    '''
     def grow_network(self):
 
         if VERBOSE == True:
             print("potential growing")
 
-        #if len(self.layer_order) > 4:
-            #return
-
-        #layer_order = self.layer_order
-        #print("Before", self.layer_order)
-
-        #for layer_id in layer_order:
-            #layer = self.layers[layer_id]
-
         new_layer_id = OUTPUT_LAYER
 
-        while new_layer_id in self.layers:
+        while new_layer_id in self.layers: # Make sure new layer_id is unique
             new_layer_id = random.randint(1, 100000)
 
-        #added = self.add_childs(new_layer_id, layer_id)
-
-        #if added:
+        #? What type of layer to add
+        #self.add_childs(new_layer_id, layer_id)
         self.all_common_layer(new_layer_id, OUTPUT_LAYER)
 
+        # removes connections to earlier layers
         rem_layer = 0
-
         if len(self.layer_order) > 2:
             rem_layer = self.layer_order[-3]
-
+        
         for out_percp in self.layers[OUTPUT_LAYER]:
             out_percp.remove_layer(rem_layer)
 
         #print("added a total of ", len(self.layers[new_layer_id]) , "new nodes")
         #print("After", self.layer_order)
             
+    '''
+    Returns a specific layer, unless layer_id == 0 then return the Image instead
+    '''
+    def get_layer(self, layer_id):
 
-    def get_layer(self, layer):
-
-        if layer == INPUT_LAYER:
+        if layer_id == INPUT_LAYER:
             return self.image
-        return self.layer_outputs[layer]
+        return self.layer_outputs[layer_id]
 
-    def train(self, images):
+    '''
+    Train the network on a set of Images
+    returns - total error for all images and percentage of correctly classified images
+    '''
+    def train(self, images: "list[Image]"):
 
         tot_err = 0
+        correct = 0
 
         for image in images:
+            highest_activation = 0
+            highest_activation_i = 0
             image_err = 0
             self.image = image.get_pixels()
 
+            # Predict layer for layer
             for lo in self.layer_order:
-                #print(lo,  flush=True)
                 outputs = self.layer_outputs[lo]
                 
                 for i, perceptron in enumerate(self.layers[lo]):
                     outputs[i] = perceptron.activate()
 
-                #self.layer_outputs[lo] = outputs
+            # Calculate if the output is correct
+            for i, output in enumerate(self.layer_outputs[OUTPUT_LAYER]):
 
-            #for i, out_perceptrons in enumerate(self.layers[self.layer_order[-1]]):
-            #    image_err += abs(out_perceptrons.backprop_ich(image.get_label(), self.classifier_map[i]))
-            #print(image_err / len(self.classifier_map))
-            #tot_err += image_err
+                if output > highest_activation:
+                    highest_activation_i = i
+                    highest_activation = output
+
+            if self.classifier_map[highest_activation_i] == image.get_label():
+                correct += 1
+
+            #print(self.classifier_map[highest_activation_i], image.get_label(), self.layer_outputs[OUTPUT_LAYER])
+
             image_err = self.backprop(image)
             tot_err += abs(image_err)
-        return tot_err
+        return (tot_err, correct / len(images))
 
+    '''
+    Backpropagation for a specific Image
+    '''
     def backprop(self, image: Image):
 
-        #out_layer = self.layer_order[-1]
         next_layer = 0
         next_errors = None
 
+        # If there are more than 1 layer we use backprop, otherwise GC
         if len(self.layer_order) > 1:
             next_layer = self.layer_order[-2]
             next_errors = np.zeros(len(self.layers[next_layer]))
@@ -481,6 +482,7 @@ class Network():
 
         output_layer = self.layer_outputs[OUTPUT_LAYER]
 
+        # GC output layer and calculate error between output and expected output
         for i, out_perceptrons in enumerate(self.layers[OUTPUT_LAYER]):
             expected = 1 if image.get_label() == self.classifier_map[i] else 0
             percp_error = expected - output_layer[i]
@@ -489,31 +491,27 @@ class Network():
             
             image_err += error
 
+            # If not 1st layer, add the error from this Perceptron to next layer
             if len(next_errors_percp) != 0:
                 next_errors += next_errors_percp
 
+        # GC for the ith layer (reversed order, from output-1 to first layer) and calculate error for next layer
         for i, lo in enumerate(reversed(self.layer_order[0:-1])):
-            i = len(self.layer_order) - i - 2
+            i = len(self.layer_order) - i - 2 #Reverse the i 
             curr_errors = next_errors
 
             if i > 0:
                 next_layer = self.layer_order[i - 1]
-                next_errors = np.zeros(len(self.layers[next_layer]))
+                next_errors = np.zeros(len(self.layers[next_layer])) #!Inefficient, should add to net as a static array to avoid uncessary malloc
             else:
                 next_layer = 0            
             
-
+            # GC and error calc
             for i, out_perceptrons in enumerate(self.layers[lo]):
                 error = curr_errors[i] if len(curr_errors) > i else 0
                 (_, next_errors_percp) = out_perceptrons.backprop_ich(curr_errors[i], next_layer)
 
-                # try:
-                #     (_, next_errors_percp) = out_perceptrons.backprop_ich(curr_errors[i], next_layer)
-                # except:
-                #     print("lo", lo, "next_layer", next_layer)
-                #     self.show_net()
-                
-
+                # If not 1st layer, add the error from this Perceptron to next layer
                 if len(next_errors_percp) != 0:
                     next_errors += next_errors_percp
 
@@ -521,6 +519,10 @@ class Network():
         return image_err
 
 
+    '''
+    Tests the network on a set of Images
+    returns - number of correct guesses, highest error on guess, avg highest error 
+    '''
     def test(self, images: "list[Image]"):
         correct = 0
         highest_error = 0
@@ -564,37 +566,39 @@ class Network():
         print("Correct percentage: ", correct / len(images))
         print("Total images:", len(images))          
 
-            
-    def show_net(self):
+    '''
+    Shows the network as a tree
+    Uses NetworkX and matplotlib
+    param incl_input - Should the input layer be included
+    #? Pretty clunky solution, probably easier to render yourself, especially if you want real-time and weights with colours
+    '''
+    def show_net(self, incl_input=False):
         total_nodes = 0
         in_nodes = 28 * 28
 
-        #print(self.layer_order)
-
         for layer_id, layer in self.layers.items():
             total_nodes += len(layer)
-            #print(layer_id, len(layer))
         
-        
-        #neigh_matrix = np.zeros((total_nodes + in_nodes, total_nodes + in_nodes))
         neigh_matrix = np.zeros((total_nodes, total_nodes))
-
-        #i1 = in_nodes
         i1 = 0
-        #print(self.layer_order)
+
+        if incl_input:
+            neigh_matrix = np.zeros((total_nodes + in_nodes, total_nodes + in_nodes))
+            i1 = in_nodes
 
         for i, layer_id in enumerate(self.layer_order):
 
             layer = self.layers[layer_id]
-            #print(len(self.layer_order), len(layer))
 
             for perceptron in layer:
 
-                #i2 = in_nodes
                 i2 = 0
-                #layers = [0] + self.layer_order[:i]
                 layers = self.layer_order[:i]
-                #print(layers)
+
+                if incl_input:
+                    i2 = in_nodes
+                    layers = [0] + self.layer_order[:i]
+                
                 for l_id2 in layers:
                     connections = perceptron.get_connections_layer(l_id2)
 
@@ -603,16 +607,16 @@ class Network():
 
                     for conn in connections:
 
-                        if abs(conn) > 0.1:
+                        if abs(conn) > 0.05:
                         #if conn != 0:
                             neigh_matrix[i1][i2] = 1
                             neigh_matrix[i2][i1] = 1
                         i2 += 1
                 i1 += 1
 
-        #print(neigh_matrix)
+
+        # Using NetworkX to generate tree network
         G = nx.from_numpy_matrix(neigh_matrix)
-        #G = nx.maximum_spanning_tree(G)
         G.edges(data=True)
         labeldict = {}
         index = 0
@@ -623,155 +627,12 @@ class Network():
                 labeldict[index] = str(i) + ":" + str(j)
                 index += 1
         
-        #pos = nx.planar_layout(G)
-        #pos = graphviz_layout(G, prog="fdp")
-        #pos = graphviz_layout(G, prog="acyclic")
         pos = graphviz_layout(G, prog="dot")
         nx.draw(G, pos=pos, labels=labeldict, with_labels = True)
 
-
-        #nx.draw(G, labels=labeldict, with_labels = True)
-        #print(G.edges())
-        #print(G.nodes())
-        #nx.draw(G, edges=G.edges(), width=10)
         plt.show()
 
 
-    #def print_net(self):
-    #    return
-
-
-'''
-Function run on thread that trains a perceptron on a set of images.
-Then test that perceptron on a new image set and stores the total error.
-'''
-def run_n_test(perceptron, train_set, test_set, results, index):
-    
-    #perceptron.train(train_set)    
-    t0 = time.time()
-    for image in train_set:
-        perceptron.set_nodes(image)
-        res = perceptron.get_nodes()
-        classif = perceptron.get_classifier()
-        expect = 1 if image.get_label() == classif else 0
-        error = expect - res
-        errArr = [error]
-        perceptron.adjust_weights(errArr, image)
-    t1 = time.time()
-    total = t1-t0
-    print(total)
-
-    err = perceptron.test(test_set)
-    results[index] = err
-
-
-
-
-def clipped_zoom(img, zoom_factor, **kwargs):
-
-    h, w = img.shape[:2]
-
-    # For multichannel images we don't want to apply the zoom factor to the RGB
-    # dimension, so instead we create a tuple of zoom factors, one per array
-    # dimension, with 1's for any trailing dimensions after the width and height.
-    zoom_tuple = (zoom_factor,) * 2 + (1,) * (img.ndim - 2)
-
-    # Zooming out
-    if zoom_factor < 1:
-
-        # Bounding box of the zoomed-out image within the output array
-        zh = int(np.round(h * zoom_factor))
-        zw = int(np.round(w * zoom_factor))
-        top = (h - zh) // 2
-        left = (w - zw) // 2
-
-        # Zero-padding
-        out = np.zeros_like(img)
-        out[top:top+zh, left:left+zw] = ndimage.zoom(img, zoom_tuple, **kwargs)
-
-    # Zooming in
-    elif zoom_factor > 1:
-
-        # Bounding box of the zoomed-in region within the input array
-        zh = int(np.round(h / zoom_factor))
-        zw = int(np.round(w / zoom_factor))
-        top = (h - zh) // 2
-        left = (w - zw) // 2
-
-        out = ndimage.zoom(img[top:top+zh, left:left+zw], zoom_tuple, **kwargs)
-
-        # `out` might still be slightly larger than `img` due to rounding, so
-        # trim off any extra pixels at the edges
-        trim_top = ((out.shape[0] - h) // 2)
-        trim_left = ((out.shape[1] - w) // 2)
-        out = out[trim_top:trim_top+h, trim_left:trim_left+w]
-
-    # If zoom_factor == 1, just return the input array
-    else:
-        out = img
-    return out
-
-
-#Data augmentation
-def data_augmentation(image_set: "list[Image]", n_sets):
-
-    # fig = plt.figure(figsize=(10, 4))
-    # ax1, ax2, ax3, ax4 = fig.subplots(1, 4)
-    # img = image_set[0].get_as_image()
-    # img_45 = ndimage.rotate(img, 45, reshape=False)
-    # img_zoom = clipped_zoom(img, 0.9)
-    # img_shift = ndimage.shift(img, -4)
-    # ax1.imshow(img, cmap='gray')
-    # ax1.set_axis_off()
-    # ax2.imshow(img_45, cmap='gray')
-    # ax2.set_axis_off()
-    # ax3.imshow(img_zoom, cmap='gray')
-    # ax3.set_axis_off()
-    # ax4.imshow(img_shift, cmap='gray')
-    # ax4.set_axis_off()
-    # fig.set_tight_layout(True)
-    # plt.show()
-
-    #fig = plt.figure(figsize=(10, 2))
-    #ax1, ax2 = fig.subplots(1, 2)
-
-    train_sets = []
-    #plt.ion()
-
-    for i in range(0,n_sets):
-        new_image_set: "list[Image]" = []
-        fails = 0
-
-        for image in image_set:
-
-            rotate_val = random.random() * 90 - 45
-            zoom_val = random.random() * 0.4 + 0.8
-            shift_val = random.random() * 4 - 2
-            #print(image.get_as_image().size)
-            img_t = ndimage.rotate(image.get_as_image(), rotate_val, reshape=False)
-            #print(img_t.size)
-            img_t = clipped_zoom(img_t, zoom_val)
-            #print(img_t.size)
-            img_t = ndimage.shift(img_t, shift_val)
-            #print(img_t.size)
-
-
-            if img_t.size < 784:
-                new_image_set.append(image)
-                fails += 1
-                #exit()
-                continue
-            new_image_set.append(Image.from_image(img_t, image.get_label()))
-            # ax1.imshow(image.get_as_image(), cmap='gray')
-            # ax2.imshow(new_image_set[-1].get_as_image(), cmap='gray')
-            # fig.set_tight_layout(True)
-            # fig.canvas.draw()
-            # fig.canvas.flush_events()
-            # time.sleep(0.1)            
-        print(fails)
-        train_sets.append(new_image_set)
-    #plt.show()
-    return train_sets
 
 
 '''
@@ -785,62 +646,17 @@ Adjust learn rate to quickly approach 0.2 for each test and train cycle.
 '''
 def run():
 
+    t_images_path = "mnist dataset\\training-images.txt"
+    t_labels_path = "mnist dataset\\training-labels.txt"
 
-    #init start
-    #if len(sys.argv) != 4:
-    #    print("Usage: python digits.py <trainings images file> <training labels file> <validation images file>")
-    #    exit()
-
-    training_images = open("mnist dataset\\training-images.txt")
-    training_labels = open("mnist dataset\\training-labels.txt")
-    validation_images = open("mnist dataset\\validation-images.txt")
-
-    print(type(training_images))
-
-    #traning_images = open(sys.argv[1])    
-    #traning_labels = open(sys.argv[2])
-    #validation_images = open(sys.argv[3])
-
-    for i in range(0, 2):
-        training_images.readline()
-        training_labels.readline()
-        validation_images.readline()
-
-    [t_numi, t_rowi, t_coli, t_digi] = training_images.readline().split()
-    [t_numl, t_digl] = training_labels.readline().split()
-    [v_numi, v_rowi, v_coli, v_digi] = validation_images.readline().split()
-    [t_numi, t_rowi, t_coli] = [int(t_numi), int(t_rowi), int(t_coli)]
-    v_numi = int(v_numi)
-    digits = [int(x) for x in t_digi]
-
-    images: "list[Image]" = []
-    for _ in range(0, t_numi):
-        images.append(Image.from_file(training_images, training_labels))
-    random.shuffle(images)
-
-    split_i = int(t_numi * 0.75)
-    train_set, test_set = images[0:split_i], images[split_i:t_numi]
-
-    val_images = []
-    for _ in range(0, v_numi):
-        val_images.append(Image.from_file(validation_images))
-
-    
-    # ax1.imshow(img, cmap='gray')
-    # ax1.set_axis_off()
-    # ax2.imshow(img_45, cmap='gray')
-    # ax2.set_axis_off()
-    # ax3.imshow(full_img_45, cmap='gray')
-    # ax3.set_axis_off()
-    # fig.set_tight_layout(True)
-    # plt.show()
-
+    (t_images, rows, cols, digits) = data_loading(t_images_path, t_labels_path)
+    (train_set, test_set) = data_split(t_images, 0.75)
     train_sets = data_augmentation(train_set, 10)
 
     output_layer = []
 
     for i in digits:
-        output_layer.append(Perceptron(None, None, t_rowi * t_coli))
+        output_layer.append(Perceptron(None, None, rows * cols))
 
     net = Network(output_layer)
 
@@ -856,13 +672,14 @@ def run():
 
     grow_index = int(repeats / grow_times)
 
-    first_err = tot_err = net.train(train_set)
+    #first_err = tot_err = net.train(train_set)
     #print(first_err)
-    prev_diff = 0
+    #prev_diff = 0
 
     for i in range(0,repeats):
         train_set_i = random.randint(0, len(train_sets) - 1)
         tot_err = net.train(train_sets[train_set_i])
+        #tot_err = net.train(train_set)
         print("total error on training:", tot_err)
 
         if i % grow_index == grow_index - 1:
@@ -894,44 +711,5 @@ def run():
 
     return
 
-    #perceptrons = []
-    #for i in digits:
-    #    perceptrons.append(Network(t_rowi * t_coli, i, 1, 196))
-    #init end
-
-    #Train and test perceptrons until the network has good enough accuracy.
-    test_set_len = len(test_set)
-    erravg = test_set_len
-    loopc = 1
-    threads = [None] * len(digits)
-    results = [None] * len(digits)
-    while erravg > 0.0885:
-        errtot = 0
-        #learn rate adjustion function.
-        new_lr = 6/pow(2,loopc) + 0.2
-
-        #Trains and test perceptrons on separate threads.
-        for i in range(len(digits)):
-            
-            perceptrons[i].set_lr(new_lr)
-            threads[i] = Thread(target=run_n_test, args=(perceptrons[i], train_set, test_set, results, i))
-            threads[i].start()
-        
-        for i in range(len(digits)):
-            threads[i].join()
-            
-        errtot = sum(results[i] for i in range(len(digits)))
-        erravg = errtot / (test_set_len * 4)
-        print(erravg)
-        loopc += 1
-
-    val_res = [None] * 4
-
-    #Evaluates images by choosing the perceptron with most confident guess.
-    for img in val_images:
-        for i in range(len(digits)):
-            val_res[i] = abs(perceptrons[i].validate(img))
-        #print(digits[val_res.index(max(val_res))])
 run()
  
-#python3 digits.py training-images.txt training-labels.txt validation-images.txt > result.txt
