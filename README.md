@@ -1,0 +1,1 @@
+Project playing around with ideas for a self-generating NN
