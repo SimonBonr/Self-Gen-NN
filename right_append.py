@@ -10,6 +10,7 @@ import networkx as nx
 import matplotlib.pyplot as plt
 from networkx.drawing.nx_pydot import graphviz_layout
 from data_handling import data_augmentation, data_loading, data_split, Image
+from layer_generation import layer_gen
 
 INPUT_LAYER = 0
 OUTPUT_LAYER = 100001
@@ -646,12 +647,21 @@ Adjust learn rate to quickly approach 0.2 for each test and train cycle.
 '''
 def run():
 
+    random.seed(1)
     t_images_path = "mnist dataset\\training-images.txt"
     t_labels_path = "mnist dataset\\training-labels.txt"
 
     (t_images, rows, cols, digits) = data_loading(t_images_path, t_labels_path)
     (train_set, test_set) = data_split(t_images, 0.75)
+    
+
+    
+
     train_sets = data_augmentation(train_set, 10)
+
+    layer_gen(train_sets[1], 28*28)
+
+    return 
 
     output_layer = []
 
